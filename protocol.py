@@ -1,33 +1,42 @@
 import pickle
 
 
-class SISP:
-    ALLOWED_HEADER_TYPES = ["CONNECT", "DATA", "MESSAGE", "VERIFY"]
-
-    def __init__(self):
-        self.header = None
-        self.body = None
-
-    def set_header(self, header_type: str):
-        if header_type not in self.ALLOWED_HEADER_TYPES:
-            raise ValueError(
-                f"Invalid header type: {header_type}. Allowed types are: {', '.join(self.ALLOWED_HEADER_TYPES)}"
-            )
-        self.header = header_type
+class SISPPacket:
+    def __init__(self, header):
+        self.header = header
 
     def set_body(self, **kwargs):
         self.body = Body(**kwargs)
-
-    @staticmethod
-    def serialize(packet):
-        return pickle.dumps(packet)
-
-    @staticmethod
-    def deserialize(data):
-        return pickle.loads(data)
 
 
 class Body:
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+
+class SISP:
+
+    @staticmethod
+    def create_connection_packet() -> SISPPacket:
+        return SISPPacket("CONNECT")
+
+    @staticmethod
+    def create_verify_packet() -> SISPPacket:
+        return SISPPacket("VERIFY")
+
+    @staticmethod
+    def create_data_packet() -> SISPPacket:
+        return SISPPacket("DATA")
+
+    @staticmethod
+    def create_message_packet() -> SISPPacket:
+        return SISPPacket("MESSAGE")
+
+    @staticmethod
+    def serialize(packet: SISPPacket) -> bytes:
+        return pickle.dumps(packet)
+
+    @staticmethod
+    def deserialize(data: bytes) -> SISPPacket:
+        return pickle.loads(data)
