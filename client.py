@@ -35,9 +35,11 @@ class Client:
         self.cli_listener_thread = threading.Thread(target=self.listen_cli)
 
     def create_uploader_thread(self):
+        self.upload_queue = queue.Queue()
         self.uploader_thread = threading.Thread(target=self.upload_image)
 
     def create_downloader_thread(self):
+        self.download_queue = queue.Queue()
         self.downloader_thread = threading.Thread(target=self.download_image)
 
     def generate_key_pair(self):
@@ -61,30 +63,52 @@ class Client:
         pass
 
     def listen_server(self):
-        pass
+        while True:
+            try:
+                message = self.socket.recv(1024).decode()
+                if message:
+                    self.handle_server_message(message)
+            except Exception as e:
+                print(f"Error listening to server: {e}")
+                break
+
+    def handle_server_message(self, message):
+        parts = message.split(' ')
+        command = parts[0]
+
+        if command == "NEW_IMAGE":
+            image_name = parts[1]
+            owner_name = parts[2]
+            print(f"New image posted: {image_name} by {owner_name}")
+        else:
+            print(f"Unknown command from server: {message}")
 
     def listen_cli(self):
         print(
             """WELCOME TO IMAGE SHARING SYSTEM!
               Command Formats:
-              - For establish connection: REGISTER <your_username>
-              - For upload an image: POST_IMAGE <image_name> <image_path>
-              - For download an image: DOWNLOAD <image_name>
-              """
-        )
+              
+        For establish connection: REGISTER <your_username>
+        For upload an image: POST_IMAGE <image_name> <image_path>
+        For download an image: DOWNLOAD <image_name>""")
         while True:
             command = input("\n").split(" ")
             if command[0] == "REGISTER":
                 self.connect(command[1])
-            elif command[0] == "POST":
-                # Pass the arguments to queue
-                pass
-            elif command[0] == "DOWNLOAD":
-                # Pass the arguments to queue
-                pass
+            elif command[0] == "POST_IMAGE": # Pass the arguments to queue
+                image_name = command[1]
+                image_path = command[2]
+                self.upload_queue.put({"Image Name": image_name, "Image Path": image_path})
+            elif command[0] == "DOWNLOAD": # Pass the arguments to queue
+                image_name = command[1]
+                self.download_queue.put({"Image Name": image_name})
+            else:
+                print("Unknown command")
 
     def upload_image(self):
         pass
+    
+# pathten image load, send queueya gönder
 
     def download_image(self):
         pass
