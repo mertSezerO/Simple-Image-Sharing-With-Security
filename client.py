@@ -4,6 +4,7 @@ import queue
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
+from PIL import Image
 
 
 class Client:
@@ -130,8 +131,12 @@ class Client:
             with open(f"downloaded_{image_name}", "wb") as image_file:
                     image_file.write(image_data)
 
-    def display_image(self):
-        pass
+    def display_image(self, image_name):
+        try:
+            image = Image.open(image_name)
+            image.show()
+        except Exception as e:
+            print(f"Error displaying image: {e}")
 
 
 # if main script
