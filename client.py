@@ -1,8 +1,14 @@
+import os
 import socket
 import threading
 import queue
+import hashlib
+import base64
 
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hashes, padding
+from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.hazmat.backends import default_backend
 from protocol import SISP
 from PIL import Image
@@ -49,7 +55,15 @@ class Client:
     def create_downloader_thread(self):
         self.download_queue = queue.Queue()
         self.downloader_thread = threading.Thread(target=self.download_image)
-
+    
+    def create_encryption_thread(self):
+        self.encode_queue = queue.Queue()
+        self.encryption_thread = threading.Thread(target=self.encrypt_image)
+    
+    def create_decryption_thread(self):
+        self.decode_queue = queue.Queue()
+        self.decryption_thread = threading.Thread(target=self.decrypt_image)
+        
     def generate_key_pair(self):
         self.private_key = rsa.generate_private_key(
             public_exponent=65537, key_size=2048, backend=default_backend()
@@ -157,15 +171,13 @@ class Client:
 
             with open(image_path, "rb") as image_file:
                 image_data = image_file.read()
-                self.sender_queue.put(
-                    {"Header": "DATA", "Image": image_data, "Image Name": image_name}
-                )
+                self.encode_queue.put({"Image": image_data, "Image Name": image_name})
 
     def download_image(self):
         while True:
             image_name = self.download_queue.get()[image_name]
-            image_data = self.sender_queue.get()[image_data]
-
+            image_data = self.decode_queue.get()[image_data]
+            
             with open(f"downloaded_{image_name}", "wb") as image_file:
                 image_file.write(image_data)
 
@@ -176,5 +188,45 @@ class Client:
         except Exception as e:
             print(f"Error displaying image: {e}")
 
+    def encrypt_image(self):
+        aes_key = os.urandom(32)
+        iv = os.urandom(16)
+        
+        image_data = self.encode_queue.get()[image_data]
+
+        cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+        padded_image_data = self.pad(image_data)
+        encrypted_image = encryptor.update(padded_image_data) + encryptor.finalize()
+   
+        combined_key_iv = aes_key + iv
+        encrypted_aes_key_iv = self.server_public_key.encrypt(
+            combined_key_iv,
+            asym_padding.OAEP(
+                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+        ))
+        
+        image_hash = hashlib.sha256(image_data).digest()
+
+        signature = self.private_key.sign(
+            image_hash,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        
+        self.sender_queue.put({"Header": "DATA", "Encrypted Image": encrypted_image, "Encrypted AES Key & IV": encrypted_aes_key_iv })
+    
+    def pad(self, data):
+        pad_length = 16 - (len(data) % 16)
+        return data + bytes([pad_length] * pad_length)
+    
+    def decrypt_image(self):
+        pass
+    
 
 # if main script
