@@ -6,6 +6,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 from PIL import Image
 
+from protocol import SISP
+
 
 class Client:
 
@@ -31,10 +33,10 @@ class Client:
 
     def create_listener_thread(self):
         self.listener_thread = threading.Thread(target=self.listen_server)
-        
+
     def create_cli_listener_thread(self):
         self.cli_listener_thread = threading.Thread(target=self.listen_cli)
-        
+
     def create_sender_thread(self):
         self.sender_queue = queue.Queue()
         self.sender_thread = threading.Thread(target=self.send)
@@ -54,22 +56,39 @@ class Client:
 
         self.public_key = self.private_key.public_key()
 
-    # Listener thread will be started in this method
     def connect(self, username):
-        # REGISTER <username>
         self.username = username
         self.generate_key_pair()
+
         # Verification
-        # Sender start
-        # Listener start
-        pass
+        self.socket.connect(("localhost", 8080))
+        connection_pkt = SISP.create_connection_packet()
+        connection_pkt.set_body(username=self.username, public_key=self.public_key)
+        self.socket.send(SISP.serialize(connection_pkt))
+
+        while True:
+            connection, (_, _) = self.socket.accept()
+            if connection is not None:
+                break
+
+        while True:
+            received_pkt = connection.recv(1024)
+            if received_pkt is not None:
+                deserialized_pkt = SISP.deserialize(received_pkt)
+                # Decrypt the packet body
+                # Key check
+                # Save public key of server
+                break
+
+        self.sender_thread.start()
+        self.listener_thread.start()
 
     def log(self):
         pass
 
     def send(self):
         pass
-    
+
     def listen_server(self):
         while True:
             try:
@@ -81,7 +100,7 @@ class Client:
                 break
 
     def handle_server_message(self, message):
-        parts = message.split(' ')
+        parts = message.split(" ")
         command = parts[0]
 
         if command == "NEW_IMAGE":
@@ -98,7 +117,8 @@ class Client:
               
         For establish connection: REGISTER <your_username>
         For upload an image: POST_IMAGE <image_name> <image_path>
-        For download an image: DOWNLOAD <image_name>""")
+        For download an image: DOWNLOAD <image_name>"""
+        )
         while True:
             command = input("\n").split(" ")
             if command[0] == "REGISTER":
@@ -106,8 +126,10 @@ class Client:
             elif command[0] == "POST_IMAGE":
                 image_name = command[1]
                 image_path = command[2]
-                self.upload_queue.put({"Image Name": image_name, "Image Path": image_path})
-            elif command[0] == "DOWNLOAD": 
+                self.upload_queue.put(
+                    {"Image Name": image_name, "Image Path": image_path}
+                )
+            elif command[0] == "DOWNLOAD":
                 image_name = command[1]
                 self.download_queue.put({"Image Name": image_name})
             else:
@@ -118,7 +140,7 @@ class Client:
             task = self.upload_queue.get()
             image_name = task["Image Name"]
             image_path = task["Image Path"]
-            
+
             with open(image_path, "rb") as image_file:
                 image_data = image_file.read()
                 self.sender_queue.put({"Image": image_data, "Image Name": image_name})
@@ -127,9 +149,9 @@ class Client:
         while True:
             image_name = self.download_queue.get()[image_name]
             image_data = self.sender_queue.get()[image_data]
-            
+
             with open(f"downloaded_{image_name}", "wb") as image_file:
-                    image_file.write(image_data)
+                image_file.write(image_data)
 
     def display_image(self, image_name):
         try:

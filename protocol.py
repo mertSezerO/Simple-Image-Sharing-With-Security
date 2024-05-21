@@ -22,10 +22,6 @@ class SISP:
         return SISPPacket("CONNECT")
 
     @staticmethod
-    def create_verify_packet() -> SISPPacket:
-        return SISPPacket("VERIFY")
-
-    @staticmethod
     def create_data_packet() -> SISPPacket:
         return SISPPacket("DATA")
 
