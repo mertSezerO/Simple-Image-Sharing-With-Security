@@ -4,6 +4,7 @@ import queue
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
+from protocol import SISP
 from PIL import Image
 
 from protocol import SISP
@@ -87,7 +88,16 @@ class Client:
         pass
 
     def send(self):
-        pass
+        data = self.sender_queue.get()
+        try:
+            packet = SISP.create_data_packet()
+            packet.set_body(**data)
+
+            print("Sending packet:", packet)
+        except ValueError as e:
+            print(f"Error: {e}")
+
+        self.socket.send(packet.serialize())
 
     def listen_server(self):
         while True:
@@ -127,7 +137,11 @@ class Client:
                 image_name = command[1]
                 image_path = command[2]
                 self.upload_queue.put(
-                    {"Image Name": image_name, "Image Path": image_path}
+                    {
+                        "Header": "MESSAGE",
+                        "Image Name": image_name,
+                        "Image Path": image_path,
+                    }
                 )
             elif command[0] == "DOWNLOAD":
                 image_name = command[1]
@@ -143,7 +157,9 @@ class Client:
 
             with open(image_path, "rb") as image_file:
                 image_data = image_file.read()
-                self.sender_queue.put({"Image": image_data, "Image Name": image_name})
+                self.sender_queue.put(
+                    {"Header": "DATA", "Image": image_data, "Image Name": image_name}
+                )
 
     def download_image(self):
         while True:
