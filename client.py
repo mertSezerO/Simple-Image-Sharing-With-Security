@@ -2,6 +2,9 @@ import socket
 import threading
 import queue
 
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
+
 
 class Client:
 
@@ -37,10 +40,20 @@ class Client:
     def create_downloader_thread(self):
         self.downloader_thread = threading.Thread(target=self.download_image)
 
+    def generate_key_pair(self):
+        self.private_key = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048, backend=default_backend()
+        )
+
+        self.public_key = self.private_key.public_key()
+
     # Listener thread will be started in this method
-    def connect(self):
-        # Key generation
+    def connect(self, username):
+        # REGISTER <username>
+        self.username = username
+        self.generate_key_pair()
         # Verification
+        # Sender start
         # Listener start
         pass
 
@@ -51,7 +64,24 @@ class Client:
         pass
 
     def listen_cli(self):
-        pass
+        print(
+            """WELCOME TO IMAGE SHARING SYSTEM!
+              Command Formats:
+              - For establish connection: REGISTER <your_username>
+              - For upload an image: POST_IMAGE <image_name> <image_path>
+              - For download an image: DOWNLOAD <image_name>
+              """
+        )
+        while True:
+            command = input("\n").split(" ")
+            if command[0] == "REGISTER":
+                self.connect(command[1])
+            elif command[0] == "POST":
+                # Pass the arguments to queue
+                pass
+            elif command[0] == "DOWNLOAD":
+                # Pass the arguments to queue
+                pass
 
     def upload_image(self):
         pass
