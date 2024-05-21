@@ -30,9 +30,13 @@ class Client:
 
     def create_listener_thread(self):
         self.listener_thread = threading.Thread(target=self.listen_server)
-
+        
     def create_cli_listener_thread(self):
         self.cli_listener_thread = threading.Thread(target=self.listen_cli)
+        
+    def create_sender_thread(self):
+        self.sender_queue = queue.Queue()
+        self.sender_thread = threading.Thread(target=self.send)
 
     def create_uploader_thread(self):
         self.upload_queue = queue.Queue()
@@ -62,6 +66,9 @@ class Client:
     def log(self):
         pass
 
+    def send(self):
+        pass
+    
     def listen_server(self):
         while True:
             try:
@@ -95,23 +102,33 @@ class Client:
             command = input("\n").split(" ")
             if command[0] == "REGISTER":
                 self.connect(command[1])
-            elif command[0] == "POST_IMAGE": # Pass the arguments to queue
+            elif command[0] == "POST_IMAGE":
                 image_name = command[1]
                 image_path = command[2]
                 self.upload_queue.put({"Image Name": image_name, "Image Path": image_path})
-            elif command[0] == "DOWNLOAD": # Pass the arguments to queue
+            elif command[0] == "DOWNLOAD": 
                 image_name = command[1]
                 self.download_queue.put({"Image Name": image_name})
             else:
                 print("Unknown command")
 
     def upload_image(self):
-        pass
-    
-# pathten image load, send queueya gönder
+        while True:
+            task = self.upload_queue.get()
+            image_name = task["Image Name"]
+            image_path = task["Image Path"]
+            
+            with open(image_path, "rb") as image_file:
+                image_data = image_file.read()
+                self.sender_queue.put({"Image": image_data, "Image Name": image_name})
 
     def download_image(self):
-        pass
+        while True:
+            image_name = self.download_queue.get()[image_name]
+            image_data = self.sender_queue.get()[image_data]
+            
+            with open(f"downloaded_{image_name}", "wb") as image_file:
+                    image_file.write(image_data)
 
     def display_image(self):
         pass
