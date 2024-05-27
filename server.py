@@ -38,6 +38,7 @@ class Server:
     def notify_users(self):
         pass
 
+    # send CA encrypted, hash and server's public key directly
     def listen_connection(self):
         pass
 
