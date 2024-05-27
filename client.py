@@ -28,6 +28,12 @@ class Client:
         self.create_downloader_thread()
         self.create_sender_thread()
 
+    def start(self):
+        self.logger_thread.start()
+        self.cli_listener_thread.start()
+        self.uploader_thread.start()
+        self.downloader_thread.start()
+
     def create_connection_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind((self.host, self.port))
@@ -259,4 +265,6 @@ class Client:
         pass
 
 
-# if main script
+if __name__ == "__main__":
+    client = Client()
+    client.start()
