@@ -112,8 +112,14 @@ class Client:
             print(message)
 
     def send(self):
-        pass
-
+        while True:
+            try:
+                packet = self.sender_queue.get()
+                self.socket.send(packet.serialize())
+            except Exception as e:
+                print(f"Error sending packet to the server: {e}")
+                break
+        
     def listen_server(self):
         while True:
             try:
@@ -171,7 +177,14 @@ class Client:
                 )
 
     def request_image(self, image_name):
-        pass
+        image_pkt = SISP.create_message_packet()
+        image_pkt.set_body(
+            payload={
+                    "Name": image_name
+                }
+            )
+        
+        self.sender_queue.put(image_pkt)
 
     def upload_image(self):
         while True:
