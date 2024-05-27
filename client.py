@@ -102,7 +102,10 @@ class Client:
         self.listener_thread.start()
 
     def log(self):
-        pass
+        while True:
+            message = self.log_queue.get()
+            print(message)
+       
 
     # While adding to queue, add with the task as a replacement to header field
     def send(self):
