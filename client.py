@@ -26,6 +26,7 @@ class Client:
         self.create_cli_listener_thread()
         self.create_uploader_thread()
         self.create_downloader_thread()
+        self.create_sender_thread()
 
     def create_connection_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -84,8 +85,8 @@ class Client:
             if received_pkt is not None:
                 deserialized_pkt = SISP.deserialize(received_pkt)
                 try:
-                    self.deserialized_pkt.body.public_key.verify(
-                        deserialized_pkt.body.ca,
+                    deserialized_pkt.body.public_key.verify(
+                        deserialized_pkt.body.signature,
                         {"username": self.username, "public key": self.public_key},
                         padding.PSS(
                             mgf=padding.MGF1(hashes.SHA256()),
@@ -105,20 +106,6 @@ class Client:
         while True:
             message = self.log_queue.get()
             print(message)
-       
-
-    # While adding to queue, add with the task as a replacement to header field
-    def send(self):
-        data = self.sender_queue.get()
-        try:
-            packet = SISP.create_data_packet()
-            packet.set_body(**data)
-
-            print("Sending packet:", packet)
-        except ValueError as e:
-            print(f"Error: {e}")
-
-        self.socket.send(packet.serialize())
 
     def listen_server(self):
         while True:
@@ -157,28 +144,41 @@ class Client:
             elif command[0] == "POST_IMAGE":
                 image_name = command[1]
                 image_path = command[2]
-                self.upload_queue.put(
+                self.encode_queue.put(
                     {
-                        "Header": "MESSAGE",
                         "Image Name": image_name,
                         "Image Path": image_path,
-                    }
+                    },
                 )
             elif command[0] == "DOWNLOAD":
                 image_name = command[1]
-                self.download_queue.put({"Image Name": image_name})
+                self.decrypt_queue.put({"Image Name": image_name})
             else:
-                print("Unknown command")
+                self.log_queue.put(
+                    """UNKNOWN COMMAND! PLEASE NOTE THAT:
+              Command Formats:
+              
+        For establish connection: REGISTER <your_username>
+        For upload an image: POST_IMAGE <image_name> <image_path>
+        For download an image: DOWNLOAD <image_name>"""
+                )
 
     def upload_image(self):
         while True:
-            task = self.upload_queue.get()
-            image_name = task["Image Name"]
-            image_path = task["Image Path"]
-
-            with open(image_path, "rb") as image_file:
-                image_data = image_file.read()
-                self.encode_queue.put({"Image": image_data, "Image Name": image_name})
+            task, data = self.upload_queue.get()
+            image_pkt = task()
+            image_pkt.set_body(
+                payload={
+                    "Image": data["Encrypted Image"],
+                    "Name": data["Encrypted Image Name"],
+                },
+                auth={
+                    "Signature": data["Signature"],
+                    "AES Key": data["Encrypted AES Key"],
+                    "Init Vector": data["Encrypted IV"],
+                },
+            )
+            self.sender_queue.put(image_pkt)
 
     def download_image(self):
         while True:
@@ -199,18 +199,30 @@ class Client:
         aes_key = os.urandom(32)
         iv = os.urandom(16)
 
-        image_data = self.encode_queue.get()[image_data]
+        image = self.encode_queue.get()
 
         cipher = Cipher(
             algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend()
         )
+
+        with open(image["Image Path"], "r") as f:
+            image_data = f.read()
+
         encryptor = cipher.encryptor()
         padded_image_data = self.pad(image_data)
         encrypted_image = encryptor.update(padded_image_data) + encryptor.finalize()
 
-        combined_key_iv = aes_key + iv
-        encrypted_aes_key_iv = self.server_public_key.encrypt(
-            combined_key_iv,
+        encrypted_aes_key = self.server_public_key.encrypt(
+            aes_key,
+            asym_padding.OAEP(
+                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        encrypted_iv = self.server_public_key.encrypt(
+            iv,
             asym_padding.OAEP(
                 mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
@@ -228,13 +240,15 @@ class Client:
             hashes.SHA256(),
         )
 
-        # add signature
-        self.sender_queue.put(
+        self.upload_queue.put(
+            SISP.create_data_packet,
             {
-                "Header": "DATA",
                 "Encrypted Image": encrypted_image,
-                "Encrypted AES Key & IV": encrypted_aes_key_iv,
-            }
+                "Image Name": image["Image Name"],
+                "Encrypted AES Key": encrypted_aes_key,
+                "Encrypted IV": encrypted_iv,
+                "Signature": signature,
+            },
         )
 
     def pad(self, data):
