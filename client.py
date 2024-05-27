@@ -113,8 +113,14 @@ class Client:
             print(message)
 
     def send(self):
-        pass
-
+        while True:
+            try:
+                packet = self.sender_queue.get()
+                self.socket.send(packet.serialize())
+            except Exception as e:
+                print(f"Error sending packet to the server: {e}")
+                break
+        
     def listen_server(self):
         while True:
             try:
