@@ -62,11 +62,11 @@ class Client:
         self.downloader_thread = threading.Thread(target=self.download_image)
 
     def create_encryption_thread(self):
-        self.encode_queue = queue.Queue()
+        self.encrypt_queue = queue.Queue()
         self.encryption_thread = threading.Thread(target=self.encrypt_image)
 
     def create_decryption_thread(self):
-        self.decode_queue = queue.Queue()
+        self.decrypt_queue = queue.Queue()
         self.decryption_thread = threading.Thread(target=self.decrypt_image)
 
     def generate_key_pair(self):
@@ -80,7 +80,6 @@ class Client:
         self.username = username
         self.generate_key_pair()
 
-        # Verification
         self.socket.connect(("localhost", 8080))
         connection_pkt = SISP.create_connection_packet()
         connection_pkt.set_body(username=self.username, public_key=self.public_key)
@@ -100,9 +99,9 @@ class Client:
                         ),
                         hashes.SHA256(),
                     )
-                    self.public_key_server = self.deserialized_pkt.body.public_key
+                    self.public_key_server = deserialized_pkt.body.public_key
                 except Exception as e:
-                    self.log_queue.put({"Signature is invalid!"})
+                    self.log_queue.put("Signature is invalid!")
                 break
 
         self.sender_thread.start()
@@ -112,6 +111,9 @@ class Client:
         while True:
             message = self.log_queue.get()
             print(message)
+
+    def send(self):
+        pass
 
     def listen_server(self):
         while True:
@@ -150,7 +152,7 @@ class Client:
             elif command[0] == "POST_IMAGE":
                 image_name = command[1]
                 image_path = command[2]
-                self.encode_queue.put(
+                self.encrypt_queue.put(
                     {
                         "Image Name": image_name,
                         "Image Path": image_path,
@@ -158,7 +160,7 @@ class Client:
                 )
             elif command[0] == "DOWNLOAD":
                 image_name = command[1]
-                self.decrypt_queue.put({"Image Name": image_name})
+                self.request_image(image_name)
             else:
                 self.log_queue.put(
                     """UNKNOWN COMMAND! PLEASE NOTE THAT:
@@ -168,6 +170,9 @@ class Client:
         For upload an image: POST_IMAGE <image_name> <image_path>
         For download an image: DOWNLOAD <image_name>"""
                 )
+
+    def request_image(self, image_name):
+        pass
 
     def upload_image(self):
         while True:
@@ -189,7 +194,7 @@ class Client:
     def download_image(self):
         while True:
             image_name = self.download_queue.get()[image_name]
-            image_data = self.decode_queue.get()[image_data]
+            image_data = self.decrypt_queue.get()[image_data]
 
             with open(f"downloaded_{image_name}", "wb") as image_file:
                 image_file.write(image_data)
@@ -205,7 +210,7 @@ class Client:
         aes_key = os.urandom(32)
         iv = os.urandom(16)
 
-        image = self.encode_queue.get()
+        image = self.encrypt_queue.get()
 
         cipher = Cipher(
             algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend()
@@ -257,12 +262,12 @@ class Client:
             },
         )
 
+    def decrypt_image(self):
+        pass
+
     def pad(self, data):
         pad_length = 16 - (len(data) % 16)
         return data + bytes([pad_length] * pad_length)
-
-    def decrypt_image(self):
-        pass
 
 
 if __name__ == "__main__":
