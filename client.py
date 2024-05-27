@@ -3,7 +3,6 @@ import socket
 import threading
 import queue
 import hashlib
-import base64
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -193,8 +192,8 @@ class Client:
 
     def download_image(self):
         while True:
-            image_name = self.download_queue.get()[image_name]
-            image_data = self.decrypt_queue.get()[image_data]
+            image_name = self.download_queue.get()["Image Name"]
+            image_data = self.download_queue.get()["Image Data"]
 
             with open(f"downloaded_{image_name}", "wb") as image_file:
                 image_file.write(image_data)
@@ -263,13 +262,71 @@ class Client:
         )
 
     def decrypt_image(self):
-        pass
+        image_pkt = self.decrypt_queue.get()
+
+        aes_key = self.private_key.decrypt(
+            image_pkt.body.auth["AES Key"],
+            asym_padding.OAEP(
+                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        iv = self.private_key.decrypt(
+            image_pkt.body.auth["Init Vector"],
+            asym_padding.OAEP(
+                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        cipher = Cipher(
+            algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend()
+        )
+
+        decryptor = cipher.decryptor()
+        padded_image_data = (
+            decryptor.update(image_pkt.body.payload["Image"]) + decryptor.finalize()
+        )
+        image_data = self.unpad(padded_image_data)
+
+        signature = self.private_key.decrypt(
+            image_pkt.body.auth["Signature"],
+            asym_padding.OAEP(
+                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        try:
+            self.public_key_server.verify(
+                signature,
+                image_data,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH,
+                ),
+                hashes.SHA256(),
+            )
+
+            self.download_queue.put(
+                {"Image Name": image_pkt.body.payload["Name"], "Image Data": image_data}
+            )
+        except Exception as e:
+            self.log_queue.put("RECEIVED AN UNVERIFIED IMAGE!")
 
     def pad(self, data):
         pad_length = 16 - (len(data) % 16)
         return data + bytes([pad_length] * pad_length)
 
+    def unpad(data):
+        pad_length = data[-1]
+        return data[:-pad_length]
+
 
 if __name__ == "__main__":
-    client = Client()
+    client = Client("localhost", 3000)
     client.start()
