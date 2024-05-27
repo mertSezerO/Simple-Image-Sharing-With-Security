@@ -99,7 +99,10 @@ class Client:
         self.listener_thread.start()
 
     def log(self):
-        pass
+        while True:
+            message = self.log_queue.get()
+            print(message)
+       
 
     def send(self):
         data = self.sender_queue.get()
