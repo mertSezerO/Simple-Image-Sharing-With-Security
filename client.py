@@ -115,12 +115,12 @@ class Client:
                 self.sys_log_queue.put(
                     (
                         "Received connection response packet: {} as signature",
-                        deserialized_pkt.body.auth["Signature"],
+                        deserialized_pkt.body.payload["Signature"],
                     )
                 )
                 try:
                     deserialized_pkt.body.public_key.verify(
-                        deserialized_pkt.body.auth["Signature"],
+                        deserialized_pkt.body.payload["Signature"],
                         {"username": self.username, "public key": serialized_pk},
                         padding.PSS(
                             mgf=padding.MGF1(hashes.SHA256()),
@@ -128,7 +128,7 @@ class Client:
                         ),
                         hashes.SHA256(),
                     )
-                    self.public_key_server = deserialized_pkt.body.public_key
+                    self.public_key_server = deserialized_pkt.body.payload["Public Key"]
                 except Exception as e:
                     self.cli_log_queue.put("Signature is invalid!")
                 break

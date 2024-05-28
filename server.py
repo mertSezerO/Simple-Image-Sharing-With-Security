@@ -6,8 +6,8 @@ import pickle
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import hashes, padding, serialization
-from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
 from PIL import Image
 
@@ -131,35 +131,68 @@ class Server:
                 print("Error: Unknown packet header")
 
     def send(self):
-        pass
+        while True:
+            task, client_socket, data = self.send_queue.get()
+            packet = task()
+
+            packet.set_body(**data)
+            client_socket.sendall(SISP.serialize(packet))
 
     def notify_users(self):
         pass
 
     def store_user(self):
-        client_socket, packet = self.user_store_queue.get()
-        self.certificate_cache[packet.body.payload["Username"]] = packet.body.payload[
-            "Public Key"
-        ]
+        while True:
+            client_socket, packet = self.user_store_queue.get()
+            self.certificate_cache[packet.body.payload["Username"]] = (
+                packet.body.payload["Public Key"]
+            )
 
-        response_payload = {
-            "Username": packet.body.payload["Username"],
-            "Public Key": packet.body.payload["Public Key"],
-        }
+            response_payload = {
+                "Username": packet.body.payload["Username"],
+                "User Public Key": packet.body.payload["Public Key"],
+            }
 
-        serialized_payload = pickle.dumps(response_payload)
+            certificate = pickle.dumps(response_payload)
 
-        certificate = self.private_key.sign(
-            serialized_payload,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256(),
-        )
+            signature = self.private_key.sign(
+                certificate,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH,
+                ),
+                hashes.SHA256(),
+            )
 
-        self.send_queue.put(
-            (SISP.create_message_packet, {"payload": {"signature": serialized_payload}})
-        )
+            serialized_pk = self.public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            ).decode("utf-8")
+
+            self.send_queue.put(
+                (
+                    SISP.create_message_packet,
+                    client_socket,
+                    {
+                        "payload": {
+                            "Signature": signature,
+                            "Public Key": serialized_pk,
+                        }
+                    },
+                )
+            )
+
+    def store_image(self):
+        pass
+
+    def fetch(self):
+        pass
+
+    def encrypt_image(self):
+        pass
+
+    def decrypt_image(self):
+        pass
 
 
 if __name__ == "__main__":
