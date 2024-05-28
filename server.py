@@ -19,6 +19,9 @@ class Server:
         self.create_image_sender_thread()
         self.create_notifier_thread()
         self.create_listener_thread()
+        self.create_request_handler_thread()
+        self.create_decryption_thread()
+        self.create_encryption_thread()
 
     def start(self):
         self.sender_thread.start()
@@ -41,6 +44,26 @@ class Server:
     def create_notifier_thread(self):
         self.notifier_thread = threading.Thread(target=self.notify_users)
 
+    def create_request_handler_thread(self):
+        self.request_queue = queue.Queue()
+        self.request_handler_thread = threading.Thread(target=self.handle_request)
+
+    def create_encryption_thread(self):
+        self.encrypt_queue = queue.Queue()
+        self.encryption_thread = threading.Thread(target=self.encrypt_image)
+
+    def create_decryption_thread(self):
+        self.decrypt_queue = queue.Queue()
+        self.decryption_thread = threading.Thread(target=self.decrypt_image)
+
+    def create_store_thread(self):
+        self.store_queue = queue.Queue()
+        self.storer_thread = threading.Thread(target=self.store)
+
+    def create_fetch_thread(self):
+        self.fetch_queue = queue.Queue()
+        self.fetcher_thread = threading.Thread(target=self.fetch)
+
     def send_image(self):
         pass
 
@@ -62,8 +85,7 @@ class Server:
                     try:
                         data = notified_socket.recv(4096)
                         if data:
-                            packet = SISP.deserialize(data)
-                            self.handle_request(notified_socket, packet)
+                            self.request_queue.put((client_socket, data))
                         else:
                             sockets_list.remove(notified_socket)
                             notified_socket.close()
@@ -72,8 +94,18 @@ class Server:
                         sockets_list.remove(notified_socket)
                         notified_socket.close()
 
-    def handle_request(self, socket, packet):
-        print(socket, packet)
+    def handle_request(self):
+        while True:
+            client_socket, serialized_packet = self.request_queue.get()
+            packet = SISP.deserialize(serialized_packet)
+            if packet.header == "CONNECT":
+                self.store_queue.put((client_socket, packet))
+            elif packet.header == "DATA":
+                self.decrypt_queue.put(packet)
+            elif packet.header == "MESSAGE":
+                self.fetch_queue.put((client_socket, packet))
+            else:
+                print("Error: Unknown packet header")
 
 
 if __name__ == "__main__":
