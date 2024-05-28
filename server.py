@@ -2,6 +2,14 @@ import socket
 import threading
 import queue
 import select
+import pickle
+
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hashes, padding, serialization
+from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+from cryptography.hazmat.backends import default_backend
+from PIL import Image
 
 from protocol import SISP
 
@@ -16,17 +24,28 @@ class Server:
         self.certificate_cache = {}
 
         self.create_connection_socket()
-        self.create_image_sender_thread()
+        self.create_sender_thread()
         self.create_notifier_thread()
         self.create_listener_thread()
         self.create_request_handler_thread()
         self.create_decryption_thread()
         self.create_encryption_thread()
+        self.create_image_storer_thread()
+        self.create_user_storer_thread()
+        self.create_fetch_thread()
 
     def start(self):
+        self.generate_key_pair()
+
         self.sender_thread.start()
         self.notifier_thread.start()
         self.listener_thread.start()
+        self.fetch_thread.start()
+        self.request_handler_thread.start()
+        self.decryption_thread.start()
+        self.encryption_thread.start()
+        self.image_storer_thread.start()
+        self.user_storer_thread.start()
 
     def create_connection_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -34,9 +53,9 @@ class Server:
         self.socket.listen(0)
         self.socket.setblocking(False)
 
-    def create_image_sender_thread(self):
+    def create_sender_thread(self):
         self.send_queue = queue.Queue()
-        self.sender_thread = threading.Thread(target=self.send_image)
+        self.sender_thread = threading.Thread(target=self.send)
 
     def create_listener_thread(self):
         self.listener_thread = threading.Thread(target=self.listen_connection)
@@ -56,21 +75,25 @@ class Server:
         self.decrypt_queue = queue.Queue()
         self.decryption_thread = threading.Thread(target=self.decrypt_image)
 
-    def create_store_thread(self):
-        self.store_queue = queue.Queue()
-        self.storer_thread = threading.Thread(target=self.store)
+    def create_user_storer_thread(self):
+        self.user_store_queue = queue.Queue()
+        self.user_storer_thread = threading.Thread(target=self.store_user)
+
+    def create_image_storer_thread(self):
+        self.image_store_queue = queue.Queue()
+        self.image_storer_thread = threading.Thread(target=self.store_image)
 
     def create_fetch_thread(self):
         self.fetch_queue = queue.Queue()
-        self.fetcher_thread = threading.Thread(target=self.fetch)
+        self.fetch_thread = threading.Thread(target=self.fetch)
 
-    def send_image(self):
-        pass
+    def generate_key_pair(self):
+        self.private_key = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048, backend=default_backend()
+        )
 
-    def notify_users(self):
-        pass
+        self.public_key = self.private_key.public_key()
 
-    # send CA encrypted, hash and server's public key directly
     def listen_connection(self):
         sockets_list = [self.socket]
         while True:
@@ -99,13 +122,44 @@ class Server:
             client_socket, serialized_packet = self.request_queue.get()
             packet = SISP.deserialize(serialized_packet)
             if packet.header == "CONNECT":
-                self.store_queue.put((client_socket, packet))
+                self.user_store_queue.put((client_socket, packet))
             elif packet.header == "DATA":
                 self.decrypt_queue.put(packet)
             elif packet.header == "MESSAGE":
                 self.fetch_queue.put((client_socket, packet))
             else:
                 print("Error: Unknown packet header")
+
+    def send(self):
+        pass
+
+    def notify_users(self):
+        pass
+
+    def store_user(self):
+        client_socket, packet = self.user_store_queue.get()
+        self.certificate_cache[packet.body.payload["Username"]] = packet.body.payload[
+            "Public Key"
+        ]
+
+        response_payload = {
+            "Username": packet.body.payload["Username"],
+            "Public Key": packet.body.payload["Public Key"],
+        }
+
+        serialized_payload = pickle.dumps(response_payload)
+
+        certificate = self.private_key.sign(
+            serialized_payload,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256(),
+        )
+
+        self.send_queue.put(
+            (SISP.create_message_packet, {"payload": {"signature": serialized_payload}})
+        )
 
 
 if __name__ == "__main__":
