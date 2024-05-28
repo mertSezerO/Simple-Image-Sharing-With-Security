@@ -6,7 +6,7 @@ import hashlib
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import hashes, padding
+from cryptography.hazmat.primitives import hashes, padding, serialization
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.hazmat.backends import default_backend
 from protocol import SISP
@@ -36,7 +36,6 @@ class Client:
     def create_connection_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind((self.host, self.port))
-        self.socket.listen(1)
 
     def create_logger_thread(self):
         self.log_queue = queue.Queue()
@@ -79,9 +78,14 @@ class Client:
         self.username = username
         self.generate_key_pair()
 
-        self.socket.connect(("localhost", 8080))
+        self.socket.connect(("localhost", 3001))
         connection_pkt = SISP.create_connection_packet()
-        connection_pkt.set_body(username=self.username, public_key=self.public_key)
+        serialized_pk = self.public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("utf-8")
+
+        connection_pkt.set_body(username=self.username, public_key=serialized_pk)
         self.socket.send(SISP.serialize(connection_pkt))
 
         while True:
@@ -91,7 +95,7 @@ class Client:
                 try:
                     deserialized_pkt.body.public_key.verify(
                         deserialized_pkt.body.signature,
-                        {"username": self.username, "public key": self.public_key},
+                        {"username": self.username, "public key": serialized_pk},
                         padding.PSS(
                             mgf=padding.MGF1(hashes.SHA256()),
                             salt_length=padding.PSS.MAX_LENGTH,
@@ -118,8 +122,7 @@ class Client:
                 self.socket.send(packet.serialize())
             except Exception as e:
                 print(f"Error sending packet to the server: {e}")
-                break
-        
+
     def listen_server(self):
         while True:
             try:
@@ -178,12 +181,8 @@ class Client:
 
     def request_image(self, image_name):
         image_pkt = SISP.create_message_packet()
-        image_pkt.set_body(
-            payload={
-                    "Name": image_name
-                }
-            )
-        
+        image_pkt.set_body(payload={"Name": image_name})
+
         self.sender_queue.put(image_pkt)
 
     def upload_image(self):
