@@ -9,8 +9,10 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, padding, serialization
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.hazmat.backends import default_backend
-from protocol import SISP
 from PIL import Image
+
+from protocol import SISP
+import log
 
 
 class Client:
@@ -20,26 +22,36 @@ class Client:
         self.port = port
 
         self.create_connection_socket()
-        self.create_logger_thread()
+        self.create_cli_logger_thread()
+        self.create_system_logger_thread()
         self.create_listener_thread()
         self.create_cli_listener_thread()
         self.create_uploader_thread()
         self.create_downloader_thread()
         self.create_sender_thread()
+        self.create_decryption_thread()
+        self.create_encryption_thread()
 
     def start(self):
-        self.logger_thread.start()
+        self.cli_logger_thread.start()
+        self.sys_logger_thread.start()
         self.cli_listener_thread.start()
         self.uploader_thread.start()
         self.downloader_thread.start()
+        self.decryption_thread.start()
+        self.encryption_thread.start()
 
     def create_connection_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind((self.host, self.port))
 
-    def create_logger_thread(self):
-        self.log_queue = queue.Queue()
-        self.logger_thread = threading.Thread(target=self.log)
+    def create_system_logger_thread(self):
+        self.sys_log_queue = queue.Queue()
+        self.sys_logger_thread = threading.Thread(target=self.log_sys)
+
+    def create_cli_logger_thread(self):
+        self.cli_log_queue = queue.Queue()
+        self.cli_logger_thread = threading.Thread(target=self.log_cli)
 
     def create_listener_thread(self):
         self.listener_thread = threading.Thread(target=self.listen_server)
@@ -85,16 +97,30 @@ class Client:
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         ).decode("utf-8")
 
-        connection_pkt.set_body(username=self.username, public_key=serialized_pk)
+        connection_pkt.set_body(
+            payload={"Username": self.username, "Public Key": serialized_pk}
+        )
         self.socket.send(SISP.serialize(connection_pkt))
+        self.sys_log_queue.put(
+            (
+                "Connection request send packet: {} as username",
+                (connection_pkt.body.payload["Username"],),
+            )
+        )
 
         while True:
             received_pkt = self.socket.recv(4096)
             if received_pkt is not None:
                 deserialized_pkt = SISP.deserialize(received_pkt)
+                self.sys_log_queue.put(
+                    (
+                        "Received connection response packet: {} as signature",
+                        deserialized_pkt.body.auth["Signature"],
+                    )
+                )
                 try:
                     deserialized_pkt.body.public_key.verify(
-                        deserialized_pkt.body.signature,
+                        deserialized_pkt.body.auth["Signature"],
                         {"username": self.username, "public key": serialized_pk},
                         padding.PSS(
                             mgf=padding.MGF1(hashes.SHA256()),
@@ -104,16 +130,21 @@ class Client:
                     )
                     self.public_key_server = deserialized_pkt.body.public_key
                 except Exception as e:
-                    self.log_queue.put("Signature is invalid!")
+                    self.cli_log_queue.put("Signature is invalid!")
                 break
 
         self.sender_thread.start()
         self.listener_thread.start()
 
-    def log(self):
+    def log_cli(self):
         while True:
-            message = self.log_queue.get()
+            message = self.cli_log_queue.get()
             print(message)
+
+    def log_sys(self):
+        while True:
+            message, arguments = self.sys_log_queue.get()
+            log.log_info(message, *arguments)
 
     def send(self):
         while True:
@@ -170,7 +201,7 @@ class Client:
                 image_name = command[1]
                 self.request_image(image_name)
             else:
-                self.log_queue.put(
+                self.cli_log_queue.put(
                     """UNKNOWN COMMAND! PLEASE NOTE THAT:
               Command Formats:
               
@@ -185,6 +216,7 @@ class Client:
 
         self.sender_queue.put(image_pkt)
 
+    # Username must be sended too
     def upload_image(self):
         while True:
             task, data = self.upload_queue.get()
@@ -263,14 +295,16 @@ class Client:
         )
 
         self.upload_queue.put(
-            SISP.create_data_packet,
-            {
-                "Encrypted Image": encrypted_image,
-                "Image Name": image["Image Name"],
-                "Encrypted AES Key": encrypted_aes_key,
-                "Encrypted IV": encrypted_iv,
-                "Signature": signature,
-            },
+            (
+                SISP.create_data_packet,
+                {
+                    "Encrypted Image": encrypted_image,
+                    "Image Name": image["Image Name"],
+                    "Encrypted AES Key": encrypted_aes_key,
+                    "Encrypted IV": encrypted_iv,
+                    "Signature": signature,
+                },
+            )
         )
 
     def decrypt_image(self):
@@ -328,7 +362,7 @@ class Client:
                 {"Image Name": image_pkt.body.payload["Name"], "Image Data": image_data}
             )
         except Exception as e:
-            self.log_queue.put("RECEIVED AN UNVERIFIED IMAGE!")
+            self.cli_log_queue.put("RECEIVED AN UNVERIFIED IMAGE!")
 
     def pad(self, data):
         pad_length = 16 - (len(data) % 16)
