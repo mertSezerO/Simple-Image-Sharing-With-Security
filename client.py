@@ -3,11 +3,12 @@ import socket
 import threading
 import queue
 import hashlib
+import pickle
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import hashes, padding, serialization
-from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
 from PIL import Image
 
@@ -119,18 +120,28 @@ class Client:
                     )
                 )
                 try:
-                    deserialized_pkt.body.public_key.verify(
-                        deserialized_pkt.body.payload["Signature"],
-                        {"username": self.username, "public key": serialized_pk},
-                        padding.PSS(
+                    server_public_key = serialization.load_pem_public_key(
+                        data=deserialized_pkt.body.payload["Public Key"].encode("utf-8")
+                    )
+
+                    server_public_key.verify(
+                        data=pickle.dumps(
+                            {
+                                "Username": self.username,
+                                "User Public Key": serialized_pk,
+                            }
+                        ),
+                        signature=deserialized_pkt.body.payload["Signature"],
+                        padding=padding.PSS(
                             mgf=padding.MGF1(hashes.SHA256()),
                             salt_length=padding.PSS.MAX_LENGTH,
                         ),
-                        hashes.SHA256(),
+                        algorithm=hashes.SHA256(),
                     )
-                    self.public_key_server = deserialized_pkt.body.payload["Public Key"]
+                    self.public_key_server = server_public_key
                 except Exception as e:
                     self.cli_log_queue.put("Signature is invalid!")
+                    print(e)
                 break
 
         self.sender_thread.start()
@@ -268,8 +279,8 @@ class Client:
 
         encrypted_aes_key = self.server_public_key.encrypt(
             aes_key,
-            asym_padding.OAEP(
-                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None,
             ),
@@ -277,8 +288,8 @@ class Client:
 
         encrypted_iv = self.server_public_key.encrypt(
             iv,
-            asym_padding.OAEP(
-                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None,
             ),
@@ -312,8 +323,8 @@ class Client:
 
         aes_key = self.private_key.decrypt(
             image_pkt.body.auth["AES Key"],
-            asym_padding.OAEP(
-                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None,
             ),
@@ -321,8 +332,8 @@ class Client:
 
         iv = self.private_key.decrypt(
             image_pkt.body.auth["Init Vector"],
-            asym_padding.OAEP(
-                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None,
             ),
@@ -340,8 +351,8 @@ class Client:
 
         signature = self.private_key.decrypt(
             image_pkt.body.auth["Signature"],
-            asym_padding.OAEP(
-                mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None,
             ),
