@@ -3,6 +3,8 @@ import threading
 import queue
 import select
 import pickle
+import os
+import hashlib
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -17,7 +19,7 @@ import log
 
 class Server:
 
-    def __init__(self, host="localhost", port=3001):
+    def __init__(self, host="localhost", port=8000):
         self.host = host
         self.port = port
 
@@ -50,7 +52,7 @@ class Server:
         self.user_storer_thread.start()
         self.logger_thread.start()
 
-        print("Server started on port: {}", self.port)
+        print("Server started on port: {}".format(self.port))
 
     def create_connection_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -218,11 +220,42 @@ class Server:
     def fetch(self):
         pass
 
-    def encrypt_image(self):
-        pass
+    def decrypt_keys(self):
+        image_pkt = self.decrypt_queue.get()
 
-    def decrypt_image(self):
-        pass
+        aes_key = self.private_key.decrypt(
+            image_pkt.body.auth["AES Key"],
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        iv = self.private_key.decrypt(
+            image_pkt.body.auth["Init Vector"],
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        self.image_store_queue.put(
+            {
+                image_pkt.body.payload["Name"]: {
+                    "Image": image_pkt.body.payload["Image"],
+                    "Owner": image_pkt.body.payload["Owner"],
+                    "Signature": image_pkt.body.auth["Signature"],
+                    "AES Key": aes_key,
+                    "Init Vector": iv,
+                }
+            }
+        )
+
+    def pad(self, data):
+        pad_length = 16 - (len(data) % 16)
+        return data + bytes([pad_length] * pad_length)
 
 
 if __name__ == "__main__":

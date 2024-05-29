@@ -230,7 +230,6 @@ class Client:
 
         self.sender_queue.put(image_pkt)
 
-    # Username must be sended too
     def upload_image(self):
         while True:
             task, data = self.upload_queue.get()
@@ -239,6 +238,7 @@ class Client:
                 payload={
                     "Image": data["Encrypted Image"],
                     "Name": data["Encrypted Image Name"],
+                    "Owner": self.username,
                 },
                 auth={
                     "Signature": data["Signature"],
