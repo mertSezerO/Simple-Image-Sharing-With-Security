@@ -12,6 +12,7 @@ from cryptography.hazmat.backends import default_backend
 from PIL import Image
 
 from protocol import SISP
+import log
 
 
 class Server:
@@ -33,6 +34,7 @@ class Server:
         self.create_image_storer_thread()
         self.create_user_storer_thread()
         self.create_fetch_thread()
+        self.create_logger_thread()
 
     def start(self):
         self.generate_key_pair()
@@ -46,6 +48,9 @@ class Server:
         self.encryption_thread.start()
         self.image_storer_thread.start()
         self.user_storer_thread.start()
+        self.logger_thread.start()
+
+        print("Server started on port: {}", self.port)
 
     def create_connection_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -87,6 +92,10 @@ class Server:
         self.fetch_queue = queue.Queue()
         self.fetch_thread = threading.Thread(target=self.fetch)
 
+    def create_logger_thread(self):
+        self.log_queue = queue.Queue()
+        self.logger_thread = threading.Thread(target=self.log)
+
     def generate_key_pair(self):
         self.private_key = rsa.generate_private_key(
             public_exponent=65537, key_size=2048, backend=default_backend()
@@ -104,6 +113,9 @@ class Server:
                 if notified_socket == self.socket:
                     client_socket, _ = self.socket.accept()
                     sockets_list.append(client_socket)
+                    self.log_queue.put(
+                        ("Connection attempt accepted, from: {}", (client_socket,))
+                    )
                 else:
                     try:
                         data = notified_socket.recv(4096)
@@ -130,6 +142,11 @@ class Server:
             else:
                 print("Error: Unknown packet header")
 
+    def log(self):
+        while True:
+            log_elements = self.log_queue.get()
+            log.log_info(log_elements[0], *(log_elements[1]))
+
     def send(self):
         while True:
             task, client_socket, data = self.send_queue.get()
@@ -137,6 +154,9 @@ class Server:
 
             packet.set_body(**data)
             client_socket.sendall(SISP.serialize(packet))
+            self.log_queue.put(
+                ("New packet send, packet: {}, to: {}", (packet, client_socket))
+            )
 
     def notify_users(self):
         pass
@@ -146,6 +166,16 @@ class Server:
             client_socket, packet = self.user_store_queue.get()
             self.certificate_cache[packet.body.payload["Username"]] = (
                 packet.body.payload["Public Key"]
+            )
+
+            self.log_queue.put(
+                (
+                    "New certificate saved, with username: {}, public key: {}",
+                    (
+                        packet.body.payload["Username"],
+                        packet.body.payload["Public Key"],
+                    ),
+                )
             )
 
             response_payload = {

@@ -116,7 +116,7 @@ class Client:
                 self.sys_log_queue.put(
                     (
                         "Received connection response packet: {} as signature",
-                        deserialized_pkt.body.payload["Signature"],
+                        (deserialized_pkt.body.payload["Signature"],),
                     )
                 )
                 try:
@@ -138,6 +138,9 @@ class Client:
                         ),
                         algorithm=hashes.SHA256(),
                     )
+                    self.sys_log_queue.put(
+                        "Certificate verified, connection established successfully."
+                    )
                     self.public_key_server = server_public_key
                 except Exception as e:
                     self.cli_log_queue.put("Signature is invalid!")
@@ -154,8 +157,8 @@ class Client:
 
     def log_sys(self):
         while True:
-            message, arguments = self.sys_log_queue.get()
-            log.log_info(message, *arguments)
+            log_elements = self.sys_log_queue.get()
+            log.log_info(log_elements[0], *(log_elements[1]))
 
     def send(self):
         while True:
