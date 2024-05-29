@@ -30,6 +30,7 @@ class Client:
         self.create_uploader_thread()
         self.create_downloader_thread()
         self.create_sender_thread()
+        self.create_message_handler_thread()
         self.create_decryption_thread()
         self.create_encryption_thread()
 
@@ -41,6 +42,7 @@ class Client:
         self.downloader_thread.start()
         self.decryption_thread.start()
         self.encryption_thread.start()
+        self.handler_thread.start()
 
     def create_connection_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -80,6 +82,10 @@ class Client:
         self.decrypt_queue = queue.Queue()
         self.decryption_thread = threading.Thread(target=self.decrypt_image)
 
+    def create_message_handler_thread(self):
+        self.handle_queue = queue.Queue()
+        self.handler_thread = threading.Thread(target=self.handle_server_message)
+
     def generate_key_pair(self):
         self.private_key = rsa.generate_private_key(
             public_exponent=65537, key_size=2048, backend=default_backend()
@@ -91,7 +97,7 @@ class Client:
         self.username = username
         self.generate_key_pair()
 
-        self.socket.connect(("localhost", 3001))
+        self.socket.connect(("localhost", 8000))
         connection_pkt = SISP.create_connection_packet()
         serialized_pk = self.public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
@@ -141,7 +147,7 @@ class Client:
                     self.sys_log_queue.put(
                         "Certificate verified, connection established successfully."
                     )
-                    self.public_key_server = server_public_key
+                    self.server_public_key = server_public_key
                 except Exception as e:
                     self.cli_log_queue.put("Signature is invalid!")
                     print(e)
@@ -164,30 +170,33 @@ class Client:
         while True:
             try:
                 packet = self.sender_queue.get()
-                self.socket.send(packet.serialize())
+                self.socket.sendall(SISP.serialize(packet))
             except Exception as e:
                 print(f"Error sending packet to the server: {e}")
 
     def listen_server(self):
         while True:
             try:
-                message = self.socket.recv(1024).decode()
-                if message:
-                    self.handle_server_message(message)
+                serialized_pkt = self.socket.recv(8 * 1024 * 1024)
+                if serialized_pkt:
+                    self.handle_queue.put(serialized_pkt)
             except Exception as e:
                 print(f"Error listening to server: {e}")
-                break
 
-    def handle_server_message(self, message):
-        parts = message.split(" ")
-        command = parts[0]
-
-        if command == "NEW_IMAGE":
-            image_name = parts[1]
-            owner_name = parts[2]
-            print(f"New image posted: {image_name} by {owner_name}")
+    def handle_server_message(self):
+        received_pkt = self.handle_queue.get()
+        packet = SISP.deserialize(received_pkt)
+        self.sys_log_queue.put(("New packet arrived with header: {}", (packet.header,)))
+        if packet.header == "MESSAGE":
+            self.cli_log_queue.put(
+                "NEW_IMAGE {} {}".format(
+                    packet.body.payload["Image Name"], packet.body.payload["Owner"]
+                )
+            )
+        elif packet.header == "DATA":
+            pass
         else:
-            print(f"Unknown command from server: {message}")
+            self.cli_log_queue.put("UNKNOW PACKET ARRIVED!")
 
     def listen_cli(self):
         print(
@@ -237,7 +246,7 @@ class Client:
             image_pkt.set_body(
                 payload={
                     "Image": data["Encrypted Image"],
-                    "Name": data["Encrypted Image Name"],
+                    "Name": data["Image Name"],
                     "Owner": self.username,
                 },
                 auth={
@@ -264,107 +273,45 @@ class Client:
             print(f"Error displaying image: {e}")
 
     def encrypt_image(self):
-        aes_key = os.urandom(32)
-        iv = os.urandom(16)
+        while True:
+            aes_key = os.urandom(32)
+            iv = os.urandom(16)
 
-        image = self.encrypt_queue.get()
+            image = self.encrypt_queue.get()
 
-        cipher = Cipher(
-            algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend()
-        )
-
-        with open(image["Image Path"], "r") as f:
-            image_data = f.read()
-
-        encryptor = cipher.encryptor()
-        padded_image_data = self.pad(image_data)
-        encrypted_image = encryptor.update(padded_image_data) + encryptor.finalize()
-
-        encrypted_aes_key = self.server_public_key.encrypt(
-            aes_key,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
-
-        encrypted_iv = self.server_public_key.encrypt(
-            iv,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
-
-        image_hash = hashlib.sha256(image_data).digest()
-
-        signature = self.private_key.sign(
-            image_hash,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256(),
-        )
-
-        self.upload_queue.put(
-            (
-                SISP.create_data_packet,
-                {
-                    "Encrypted Image": encrypted_image,
-                    "Image Name": image["Image Name"],
-                    "Encrypted AES Key": encrypted_aes_key,
-                    "Encrypted IV": encrypted_iv,
-                    "Signature": signature,
-                },
+            cipher = Cipher(
+                algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend()
             )
-        )
 
-    def decrypt_image(self):
-        image_pkt = self.decrypt_queue.get()
+            with open(image["Image Path"], "rb") as f:
+                image_data = f.read()
 
-        aes_key = self.private_key.decrypt(
-            image_pkt.body.auth["AES Key"],
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
+            encryptor = cipher.encryptor()
+            padded_image_data = self.pad(image_data)
+            encrypted_image = encryptor.update(padded_image_data) + encryptor.finalize()
 
-        iv = self.private_key.decrypt(
-            image_pkt.body.auth["Init Vector"],
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
+            encrypted_aes_key = self.server_public_key.encrypt(
+                aes_key,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
 
-        cipher = Cipher(
-            algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend()
-        )
+            encrypted_iv = self.server_public_key.encrypt(
+                iv,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
 
-        decryptor = cipher.decryptor()
-        padded_image_data = (
-            decryptor.update(image_pkt.body.payload["Image"]) + decryptor.finalize()
-        )
-        image_data = self.unpad(padded_image_data)
+            image_hash = hashlib.sha256(image_data).digest()
 
-        signature = self.private_key.decrypt(
-            image_pkt.body.auth["Signature"],
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
-
-        try:
-            self.public_key_server.verify(
-                signature,
-                image_data,
+            signature = self.private_key.sign(
+                image_hash,
                 padding.PSS(
                     mgf=padding.MGF1(hashes.SHA256()),
                     salt_length=padding.PSS.MAX_LENGTH,
@@ -372,11 +319,79 @@ class Client:
                 hashes.SHA256(),
             )
 
-            self.download_queue.put(
-                {"Image Name": image_pkt.body.payload["Name"], "Image Data": image_data}
+            self.upload_queue.put(
+                (
+                    SISP.create_data_packet,
+                    {
+                        "Encrypted Image": encrypted_image,
+                        "Image Name": image["Image Name"],
+                        "Encrypted AES Key": encrypted_aes_key,
+                        "Encrypted IV": encrypted_iv,
+                        "Signature": signature,
+                    },
+                )
             )
-        except Exception as e:
-            self.cli_log_queue.put("RECEIVED AN UNVERIFIED IMAGE!")
+
+    def decrypt_image(self):
+        while True:
+            image_pkt = self.decrypt_queue.get()
+
+            aes_key = self.private_key.decrypt(
+                image_pkt.body.auth["AES Key"],
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+
+            iv = self.private_key.decrypt(
+                image_pkt.body.auth["Init Vector"],
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+
+            cipher = Cipher(
+                algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend()
+            )
+
+            decryptor = cipher.decryptor()
+            padded_image_data = (
+                decryptor.update(image_pkt.body.payload["Image"]) + decryptor.finalize()
+            )
+            image_data = self.unpad(padded_image_data)
+
+            signature = self.private_key.decrypt(
+                image_pkt.body.auth["Signature"],
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+
+            try:
+                self.public_key_server.verify(
+                    signature,
+                    image_data,
+                    padding.PSS(
+                        mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH,
+                    ),
+                    hashes.SHA256(),
+                )
+
+                self.download_queue.put(
+                    {
+                        "Image Name": image_pkt.body.payload["Name"],
+                        "Image Data": image_data,
+                    }
+                )
+            except Exception as e:
+                self.cli_log_queue.put("RECEIVED AN UNVERIFIED IMAGE!")
 
     def pad(self, data):
         pad_length = 16 - (len(data) % 16)
@@ -388,5 +403,5 @@ class Client:
 
 
 if __name__ == "__main__":
-    client = Client("localhost", 3000)
+    client = Client("localhost", 3001)
     client.start()

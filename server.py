@@ -27,6 +27,8 @@ class Server:
         self.certificate_cache = {}
 
         self.create_connection_socket()
+        self.socket_list = [self.socket]
+
         self.create_sender_thread()
         self.create_notifier_thread()
         self.create_listener_thread()
@@ -68,6 +70,7 @@ class Server:
         self.listener_thread = threading.Thread(target=self.listen_connection)
 
     def create_notifier_thread(self):
+        self.notify_queue = queue.Queue()
         self.notifier_thread = threading.Thread(target=self.notify_users)
 
     def create_request_handler_thread(self):
@@ -76,11 +79,11 @@ class Server:
 
     def create_encryption_thread(self):
         self.encrypt_queue = queue.Queue()
-        self.encryption_thread = threading.Thread(target=self.encrypt_image)
+        self.encryption_thread = threading.Thread(target=self.encrypt_keys)
 
     def create_decryption_thread(self):
         self.decrypt_queue = queue.Queue()
-        self.decryption_thread = threading.Thread(target=self.decrypt_image)
+        self.decryption_thread = threading.Thread(target=self.decrypt_keys)
 
     def create_user_storer_thread(self):
         self.user_store_queue = queue.Queue()
@@ -106,29 +109,28 @@ class Server:
         self.public_key = self.private_key.public_key()
 
     def listen_connection(self):
-        sockets_list = [self.socket]
         while True:
             read_sockets, _, exception_sockets = select.select(
-                sockets_list, [], sockets_list
+                self.socket_list, [], self.socket_list
             )
             for notified_socket in read_sockets:
                 if notified_socket == self.socket:
                     client_socket, _ = self.socket.accept()
-                    sockets_list.append(client_socket)
+                    self.socket_list.append(client_socket)
                     self.log_queue.put(
                         ("Connection attempt accepted, from: {}", (client_socket,))
                     )
                 else:
                     try:
-                        data = notified_socket.recv(4096)
+                        data = notified_socket.recv(4 * 1024 * 1024)
                         if data:
                             self.request_queue.put((client_socket, data))
                         else:
-                            sockets_list.remove(notified_socket)
+                            self.socket_list.remove(notified_socket)
                             notified_socket.close()
                     except Exception as e:
                         print(f"Error: {e}")
-                        sockets_list.remove(notified_socket)
+                        self.socket_list.remove(notified_socket)
                         notified_socket.close()
 
     def handle_request(self):
@@ -159,9 +161,6 @@ class Server:
             self.log_queue.put(
                 ("New packet send, packet: {}, to: {}", (packet, client_socket))
             )
-
-    def notify_users(self):
-        pass
 
     def store_user(self):
         while True:
@@ -215,47 +214,72 @@ class Server:
             )
 
     def store_image(self):
-        pass
+        while True:
+            image_name, image_data = self.image_store_queue.get()
+            self.image_cache[image_name] = image_data
+            self.log_queue.put(
+                (
+                    "New Image Posted, with name: {}, owner: {}",
+                    (image_name, image_data["Owner"]),
+                )
+            )
+
+            self.notify_queue.put((image_name, image_data["Owner"]))
+
+    def notify_users(self):
+        while True:
+            image_name, image_owner = self.notify_queue.get()
+
+            # Will be checked
+            for socket in self.socket_list:
+                if socket != self.socket:
+                    packet = SISP.create_message_packet()
+                    packet.set_body(
+                        payload={"Image Name": image_name, "Owner": image_owner}
+                    )
+                    socket.sendall(SISP.serialize(packet))
+                    self.log_queue.put(("Notified socket: {}", (socket,)))
 
     def fetch(self):
         pass
 
+    def encrypt_keys(self):
+        pass
+
     def decrypt_keys(self):
-        image_pkt = self.decrypt_queue.get()
+        while True:
+            image_pkt = self.decrypt_queue.get()
 
-        aes_key = self.private_key.decrypt(
-            image_pkt.body.auth["AES Key"],
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
+            aes_key = self.private_key.decrypt(
+                image_pkt.body.auth["AES Key"],
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
 
-        iv = self.private_key.decrypt(
-            image_pkt.body.auth["Init Vector"],
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
+            iv = self.private_key.decrypt(
+                image_pkt.body.auth["Init Vector"],
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
 
-        self.image_store_queue.put(
-            {
-                image_pkt.body.payload["Name"]: {
-                    "Image": image_pkt.body.payload["Image"],
-                    "Owner": image_pkt.body.payload["Owner"],
-                    "Signature": image_pkt.body.auth["Signature"],
-                    "AES Key": aes_key,
-                    "Init Vector": iv,
-                }
-            }
-        )
-
-    def pad(self, data):
-        pad_length = 16 - (len(data) % 16)
-        return data + bytes([pad_length] * pad_length)
+            self.image_store_queue.put(
+                (
+                    image_pkt.body.payload["Name"],
+                    {
+                        "Image": image_pkt.body.payload["Image"],
+                        "Owner": image_pkt.body.payload["Owner"],
+                        "Signature": image_pkt.body.auth["Signature"],
+                        "AES Key": aes_key,
+                        "Init Vector": iv,
+                    },
+                )
+            )
 
 
 if __name__ == "__main__":
