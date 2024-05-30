@@ -4,6 +4,7 @@ import threading
 import queue
 import hashlib
 import pickle
+import sys
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -403,5 +404,10 @@ class Client:
 
 
 if __name__ == "__main__":
-    client = Client("localhost", 3001)
+    if len(sys.argv) != 2:
+        print("Usage: python client.py <port>")
+        sys.exit(1)
+
+    port = int(sys.argv[1])
+    client = Client("localhost", port)
     client.start()
