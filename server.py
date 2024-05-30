@@ -3,15 +3,11 @@ import threading
 import queue
 import select
 import pickle
-import os
-import hashlib
 
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
-from PIL import Image
 
 from protocol import SISP
 import log
@@ -252,12 +248,19 @@ class Server:
             )
 
             self.encrypt_queue.put(
-                (client_socket, image_data, received_pkt.body.payload["Username"])
+                (
+                    client_socket,
+                    received_pkt.body.payload["Name"],
+                    image_data,
+                    received_pkt.body.payload["Username"],
+                )
             )
 
     def encrypt_keys(self):
         while True:
-            client_socket, image_data, requesting_user = self.encrypt_queue.get()
+            client_socket, image_name, image_data, requesting_user = (
+                self.encrypt_queue.get()
+            )
 
             requesting_user_pk_str = self.certificate_cache[requesting_user]
             requesting_user_pk = serialization.load_pem_public_key(
@@ -286,10 +289,13 @@ class Server:
 
             self.send_queue.put(
                 (
-                    SISP.create_data_packet(),
+                    SISP.create_data_packet,
                     client_socket,
                     {
-                        "payload": {"Image": image_data["Image"]},
+                        "payload": {
+                            "Image": image_data["Image"],
+                            "Name": image_name,
+                        },
                         "auth": {
                             "Signature": image_data["Signature"],
                             "AES Key": encrypted_aes,

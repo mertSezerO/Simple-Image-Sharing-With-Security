@@ -185,19 +185,22 @@ class Client:
                 print(f"Error listening to server: {e}")
 
     def handle_server_message(self):
-        received_pkt = self.handle_queue.get()
-        packet = SISP.deserialize(received_pkt)
-        self.sys_log_queue.put(("New packet arrived with header: {}", (packet.header,)))
-        if packet.header == "MESSAGE":
-            self.cli_log_queue.put(
-                "NEW_IMAGE {} {}".format(
-                    packet.body.payload["Image Name"], packet.body.payload["Owner"]
-                )
+        while True:
+            received_pkt = self.handle_queue.get()
+            packet = SISP.deserialize(received_pkt)
+            self.sys_log_queue.put(
+                ("New packet arrived with header: {}", (packet.header,))
             )
-        elif packet.header == "DATA":
-            pass
-        else:
-            self.cli_log_queue.put("UNKNOW PACKET ARRIVED!")
+            if packet.header == "MESSAGE":
+                self.cli_log_queue.put(
+                    "NEW_IMAGE {} {}".format(
+                        packet.body.payload["Image Name"], packet.body.payload["Owner"]
+                    )
+                )
+            elif packet.header == "DATA":
+                self.decrypt_queue.put(packet)
+            else:
+                self.cli_log_queue.put("UNKNOWN PACKET ARRIVED!")
 
     def listen_cli(self):
         print(
@@ -236,7 +239,7 @@ class Client:
 
     def request_image(self, image_name):
         image_pkt = SISP.create_message_packet()
-        image_pkt.set_body(payload={"Name": image_name})
+        image_pkt.set_body(payload={"Username": self.username, "Name": image_name})
 
         self.sender_queue.put(image_pkt)
 
@@ -260,10 +263,9 @@ class Client:
 
     def download_image(self):
         while True:
-            image_name = self.download_queue.get()["Image Name"]
-            image_data = self.download_queue.get()["Image Data"]
+            image_name, image_data = self.download_queue.get()
 
-            with open(f"downloaded_{image_name}", "wb") as image_file:
+            with open(f"downloaded_images/{image_name}.jpg", "wb") as image_file:
                 image_file.write(image_data)
 
     def display_image(self, image_name):
@@ -363,33 +365,31 @@ class Client:
             padded_image_data = (
                 decryptor.update(image_pkt.body.payload["Image"]) + decryptor.finalize()
             )
+
             image_data = self.unpad(padded_image_data)
 
-            signature = self.private_key.decrypt(
-                image_pkt.body.auth["Signature"],
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None,
-                ),
+            owner_pk = serialization.load_pem_public_key(
+                image_pkt.body.auth["Owner Public Key"].encode()
             )
 
+            image_hash = hashlib.sha256(image_data).digest()
+
             try:
-                self.public_key_server.verify(
-                    signature,
-                    image_data,
-                    padding.PSS(
+                owner_pk.verify(
+                    signature=image_pkt.body.auth["Signature"],
+                    data=image_hash,
+                    padding=padding.PSS(
                         mgf=padding.MGF1(hashes.SHA256()),
                         salt_length=padding.PSS.MAX_LENGTH,
                     ),
-                    hashes.SHA256(),
+                    algorithm=hashes.SHA256(),
                 )
 
                 self.download_queue.put(
-                    {
-                        "Image Name": image_pkt.body.payload["Name"],
-                        "Image Data": image_data,
-                    }
+                    (
+                        image_pkt.body.payload["Name"],
+                        image_data,
+                    )
                 )
             except Exception as e:
                 self.cli_log_queue.put("RECEIVED AN UNVERIFIED IMAGE!")
@@ -398,7 +398,7 @@ class Client:
         pad_length = 16 - (len(data) % 16)
         return data + bytes([pad_length] * pad_length)
 
-    def unpad(data):
+    def unpad(self, data):
         pad_length = data[-1]
         return data[:-pad_length]
 
