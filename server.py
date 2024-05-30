@@ -230,7 +230,6 @@ class Server:
         while True:
             image_name, image_owner = self.notify_queue.get()
 
-            # Will be checked
             for socket in self.socket_list:
                 if socket != self.socket:
                     packet = SISP.create_message_packet()
@@ -241,10 +240,65 @@ class Server:
                     self.log_queue.put(("Notified socket: {}", (socket,)))
 
     def fetch(self):
-        pass
+        while True:
+            client_socket, received_pkt = self.fetch_queue.get()
+
+            image_data = self.image_cache[received_pkt.body.payload["Name"]]
+            self.log_queue.put(
+                (
+                    "Image Download Request, For Image: {}",
+                    (received_pkt.body.payload["Name"],),
+                )
+            )
+
+            self.encrypt_queue.put(
+                (client_socket, image_data, received_pkt.body.payload["Username"])
+            )
 
     def encrypt_keys(self):
-        pass
+        while True:
+            client_socket, image_data, requesting_user = self.encrypt_queue.get()
+
+            requesting_user_pk_str = self.certificate_cache[requesting_user]
+            requesting_user_pk = serialization.load_pem_public_key(
+                requesting_user_pk_str.encode()
+            )
+
+            encrypted_aes = requesting_user_pk.encrypt(
+                image_data["AES Key"],
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+
+            encrypted_iv = requesting_user_pk.encrypt(
+                image_data["Init Vector"],
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+
+            owner_pk = self.certificate_cache[image_data["Owner"]]
+
+            self.send_queue.put(
+                (
+                    SISP.create_data_packet(),
+                    client_socket,
+                    {
+                        "payload": {"Image": image_data["Image"]},
+                        "auth": {
+                            "Signature": image_data["Signature"],
+                            "AES Key": encrypted_aes,
+                            "Init Vector": encrypted_iv,
+                            "Owner Public Key": owner_pk,
+                        },
+                    },
+                )
+            )
 
     def decrypt_keys(self):
         while True:
