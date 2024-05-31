@@ -120,7 +120,7 @@ class Server:
                     try:
                         data = notified_socket.recv(4 * 1024 * 1024)
                         if data:
-                            self.request_queue.put((client_socket, data))
+                            self.request_queue.put((notified_socket, data))
                         else:
                             self.socket_list.remove(notified_socket)
                             notified_socket.close()
@@ -242,8 +242,11 @@ class Server:
             image_data = self.image_cache[received_pkt.body.payload["Name"]]
             self.log_queue.put(
                 (
-                    "Image Download Request, For Image: {}",
-                    (received_pkt.body.payload["Name"],),
+                    "Image Download Request, For Image: {}, by user: {}",
+                    (
+                        received_pkt.body.payload["Name"],
+                        received_pkt.body.payload["Username"],
+                    ),
                 )
             )
 

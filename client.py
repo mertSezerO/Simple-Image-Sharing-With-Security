@@ -111,7 +111,7 @@ class Client:
         self.socket.send(SISP.serialize(connection_pkt))
         self.sys_log_queue.put(
             (
-                "Connection request send packet: {} as username",
+                "Connection request packet sent by: {}",
                 (connection_pkt.body.payload["Username"],),
             )
         )
@@ -122,8 +122,8 @@ class Client:
                 deserialized_pkt = SISP.deserialize(received_pkt)
                 self.sys_log_queue.put(
                     (
-                        "Received connection response packet: {} as signature",
-                        (deserialized_pkt.body.payload["Signature"],),
+                        "Received connection response packet: {} as signature, received by: {}",
+                        (deserialized_pkt.body.payload["Signature"], self.username),
                     )
                 )
                 try:
@@ -146,9 +146,14 @@ class Client:
                         algorithm=hashes.SHA256(),
                     )
                     self.sys_log_queue.put(
-                        "Certificate verified, connection established successfully."
+                        (
+                            "Certificate verified, connection established successfully.",
+                            (),
+                        )
                     )
                     self.server_public_key = server_public_key
+
+                    os.makedirs("downloaded_images", exist_ok=True)
                 except Exception as e:
                     self.cli_log_queue.put("Signature is invalid!")
                     print(e)
@@ -189,7 +194,10 @@ class Client:
             received_pkt = self.handle_queue.get()
             packet = SISP.deserialize(received_pkt)
             self.sys_log_queue.put(
-                ("New packet arrived with header: {}", (packet.header,))
+                (
+                    "New packet arrived with header: {}, received by: {}",
+                    (packet.header, self.username),
+                )
             )
             if packet.header == "MESSAGE":
                 self.cli_log_queue.put(
@@ -209,7 +217,8 @@ class Client:
               
         For establish connection: REGISTER <your_username>
         For upload an image: POST_IMAGE <image_name> <image_path>
-        For download an image: DOWNLOAD <image_name>"""
+        For download an image: DOWNLOAD <image_name>
+        For displaying of a downloaded image: DISPLAY <image_name>"""
         )
         while True:
             command = input("\n").split(" ")
@@ -227,6 +236,9 @@ class Client:
             elif command[0] == "DOWNLOAD":
                 image_name = command[1]
                 self.request_image(image_name)
+            elif command[0] == "DISPLAY":
+                image_name = command[1]
+                self.display_image(image_name)
             else:
                 self.cli_log_queue.put(
                     """UNKNOWN COMMAND! PLEASE NOTE THAT:
@@ -234,7 +246,8 @@ class Client:
               
         For establish connection: REGISTER <your_username>
         For upload an image: POST_IMAGE <image_name> <image_path>
-        For download an image: DOWNLOAD <image_name>"""
+        For download an image: DOWNLOAD <image_name>
+        For displaying of a downloaded image: DISPLAY <image_name>"""
                 )
 
     def request_image(self, image_name):
@@ -270,7 +283,7 @@ class Client:
 
     def display_image(self, image_name):
         try:
-            image = Image.open(image_name)
+            image = Image.open(f"downloaded_images/{image_name}")
             image.show()
         except Exception as e:
             print(f"Error displaying image: {e}")
