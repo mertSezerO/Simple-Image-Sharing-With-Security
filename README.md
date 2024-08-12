@@ -1,9 +1,9 @@
 # Simple-Image-Sharing-With-Security
 Simple Image Sharing System
 Group Members
-Member 1: Ece Kızılkaya, 150119065
-Member 2: Gamze Ndiye Şahin, 150119043
-Member 3: Mert Sezer Oktay , 150120017
+Member 1: Ece Kızılkaya
+Member 2: Gamze Ndiye Şahin
+Member 3: Mert Sezer Oktay
 
 Introduction
 The Image Sharing System is a client-server application designed for securely sharing images between multiple users over a network. The system utilizes asymmetric and symmetric encryption to ensure secure communication and image transfer. It also includes logging mechanisms for tracking system events.
